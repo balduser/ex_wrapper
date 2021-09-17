@@ -1,24 +1,26 @@
 from Exscript import Account
 from Exscript.protocols import SSH2
-# To be done: description, execute_file
+# To be done: description(), execute(), tests, validation
 class Commutator:
     """Creates objects that may be interacted like commutators
-    Method performed with a commutator (commutator-methods) are:
-        execute_file()
-        show_int()
-        show_run()
-        show_sw()
-        version()
-    Methods performed with port (port-methods) are:
-        get_poe(port, **kwargs)
-        get_vlan(port, **kwargs)
-        link_state(port)
-        set_poe(port, **kwargs)
-        set_vlan(port, **kwargs)
-        show_int(port)
-        show_run(port)
+    Method applied to a commutator (commutator-methods) are:
+        execute() # Execute an arbitrary command
+        execute_file() # Execute a script with commands for a commutator
+        show_int() # Returns the result of `show interfaces` command (string)
+        show_run() # Returns the result of `show running-config` command (string)
+        version() # Returns the version of firmware (string)
+        write() # Execute `write` command
+    Methods applied to a port (port-methods) are:
+        get_poe(port, **kwargs) # Returns Poe parameters (see docstring)
+        get_vlan(port, **kwargs) # Returns information about vlan configuration (see docstring)
+        link_state(port) # Returns 1/0 for link state Up/Down
+        set_poe(port, **kwargs) # Setting up Poe
+        set_vlan(port, **kwargs) # Setting up vlan configuration
+        show_int(port) # Returns the result of `show interfaces <port>`
+        show_run(port) # Returns the result of `show running-config <port>`
     Port-methods always get the port number as a first argument (see parse_portnumber() docstring)."""
 
+    console_print = False
     default_login = 'admin'
     default_password = 'admin'
 
@@ -47,10 +49,11 @@ class Commutator:
 
     def parse_portnumber(self, *args):
         """Parsing port from the first position argument
-        as int:
+        as int < 1000 - twisted pair ports:
             1 for GigabitEthernet 1/0/1,
             24 for GigabitEthernet 1/0/24,
             222 for GigabitEthernet 2/0/22,
+        as int > 1000 - fiber optics ports:
             1001 for TengigabitEthernet 1/0/1,
             1404 for TengigabitEthernet 4/0/4 etc
         as list:
@@ -105,19 +108,8 @@ class Commutator:
         return answer
 
 
-    def show_sw(self):
-
-        try:
-            self.__conn.execute('show version')
-            answer = self.__conn.response
-            for line in answer.split('\n'):
-                if 'Version' in line:
-                    return line.split('Version:')[1].strip()
-        except:
-            pass
-
     def link_state(self, *args):
-            """Returns 1 is port's link state is up and 0 if it's down"""
+        """Returns 1 if port's link state is up and 0 if it's down"""
 
         try:
             interface = self.parse_portnumber(*args)
@@ -135,7 +127,7 @@ class Commutator:
 
 
     def get_vlan(self, *args, **kwargs):
-        """Returns information about vlans setup. Cannot be launched without arguments, selecting an interface is necessary.
+        """Returns information about vlan setup. Selecting an interface is necessary.
         Parameters for selecting are the same as in show_run(). Returns a dict e.g.:
             {'mode': 'trunk', 'allowed': 104, 'native': 110, 'mtv': 118}
             {'mode': 'access', 'access': 107}
@@ -187,62 +179,40 @@ class Commutator:
         for arg in args:
             if isinstance(arg, dict):
                 current_setup = self.get_vlan(*args, **kwargs)
-                print('current: ', current_setup)
-                print('Dict to be set: ', arg)
                 # this arg must be a dict with parameters to be implemented
-                self.__conn.execute('config')
-                self.__conn.execute(f'interface {interface}')
+                self.execute('config')
+                self.execute(f'interface {interface}')
 
                 # First we clear the config
-                if current_setup and current_setup['mode'] == 'trunk':
-                    self.__conn.execute(f"no switchport trunk multicast-tv vlan")
-                    print('2', self.__conn.response)
-                    self.__conn.execute(f"switchport trunk allowed vlan remove all")
-                    print('3', self.__conn.response)
+                if current_setup and (current_setup['mode'] == 'trunk'):
+                    self.execute(f"no switchport trunk multicast-tv vlan")
+                    self.execute(f"switchport trunk allowed vlan remove all")
                     self.__conn.execute(f"no switchport trunk native vlan")
-                    print('1', self.__conn.response)
-                if current_setup and current_setup['mode'] == 'access':
-                    self.__conn.execute(f"no switchport access multicast-tv vlan")
-                    print('4', self.__conn.response)
-                    self.__conn.execute('no switchport access vlan')
-                    print('4+', self.__conn.response)
-                self.__conn.execute(f"no switchport mode")
-                print('0', self.__conn.response)
+                if current_setup and (current_setup['mode'] == 'access'):
+                    self.execute(f"no switchport access multicast-tv vlan")
+                    self.execute('no switchport access vlan')
+                self.execute(f"no switchport mode")
 
                 # Then we set it up
-                if not arg:
-                    # If the dict is empty, there's no need to set switchport
-                    self.__conn.execute('ex')
-                    self.__conn.execute('ex')
-                    return None
-                print(f"switchport mode {arg['mode']}")
-                self.__conn.execute(f"switchport mode {arg['mode']}")
-                print('5', self.__conn.response)
-                if arg['mode'] == 'trunk':
-                    if 'allowed' in arg:
-                        self.__conn.execute(f"switchport trunk allowed vlan add {arg['allowed']}")
-                        print('6', self.__conn.response)
-                    if 'native' in arg:
-                        self.__conn.execute(f"switchport trunk native vlan {arg['native']}")
-                        print('7', self.__conn.response)
-                    if 'mtv' in arg:
-                        self.__conn.execute(f"switchport trunk multicast-tv vlan {arg['mtv']}")
-                        print('8', self.__conn.response)
-                elif arg['mode'] == 'access':
-                    self.__conn.execute(f"switchport access vlan {arg['vlan']}")
-                    print('9', self.__conn.response)
-                    if 'mtv' in arg:
-                        self.__conn.execute(f"switchport access multicast-tv vlan {arg['mtv']}")
-                        print('10', self.__conn.response)
+                if arg:
+                    self.execute(f"switchport mode {arg['mode']}")
+                    if arg['mode'] == 'trunk':
+                        if 'allowed' in arg:
+                            self.execute(f"switchport trunk allowed vlan add {arg['allowed']}")
+                        if 'native' in arg:
+                            self.execute(f"switchport trunk native vlan {arg['native']}")
+                        if 'mtv' in arg:
+                            self.execute(f"switchport trunk multicast-tv vlan {arg['mtv']}")
+                    elif arg['mode'] == 'access':
+                        self.execute(f"switchport access vlan {arg['vlan']}")
+                        if 'mtv' in arg:
+                            self.execute(f"switchport access multicast-tv vlan {arg['mtv']}")
 
                 # Exiting
-                self.__conn.execute('ex')
-                self.__conn.execute('ex')
+                self.execute('ex')
+                self.execute('ex')
+                return True
 
-
-    def execute_file(self, filename):
-        """Reading a file and consequent executing each instruction to the commutator configuration"""
-        pass
 
 
     def get_poe(self, *args, **kwargs):
@@ -307,8 +277,58 @@ class Commutator:
             pass
 
 
+    def execute(self, command):
+        """Executes a command and returns the output"""
+
+        self.__conn.execute(command)
+        if Commutator.console_print:
+            print(self.__conn.response)
+        return self.__conn.response
+
+    def execute_file(self, filename):
+        """Reads the file and consequently executes each instruction to the commutator configuration.
+        When writing a script put at least one instruction between `write` and `reload`"""
+
+        with open(filename, 'r') as file:
+            for line in file:
+                if line.startswith('wr'):
+                    self.__conn.set_prompt('\?')
+                    self.execute(line.strip())
+                    self.__conn.set_prompt()
+                    self.execute('y')
+                elif line.startswith('rel'):
+                    self.__conn.set_prompt('] ')
+                    self.execute(line.strip())
+                    self.__conn.send('y')
+                    self.__conn.close()
+                else:
+                    self.execute(line.strip())
+
+
+    def version(self):
+        """Returns a firmware version (a string)"""
+
+        try:
+            self.execute('show version')
+            answer = self.__conn.response
+            for line in answer.split('\n'):
+                if 'Version' in line:
+                    return line.split('Version:')[1].strip()
+        except:
+            pass
+
+
+    def write(self):
+        """Executes `write` command"""
+
+        self.__conn.set_prompt('\?')
+        self.execute('write')
+        self.__conn.set_prompt()
+        self.execute('y')
+
+
     def __del__(self):
-        print('Disconnecting')
+        print(f'Disconnecting from {self.ip}')
         try:
             self.__conn.send('exit\r')
             self.__conn.close()
