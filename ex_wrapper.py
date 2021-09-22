@@ -1,23 +1,25 @@
 from Exscript import Account
 from Exscript.protocols import SSH2
-# To be done: description(), execute(), tests, validation
+
+
 class Commutator:
     """Creates objects that may be interacted like commutators
-    Method applied to a commutator (commutator-methods) are:
-        execute() # Execute an arbitrary command
-        execute_file() # Execute a script with commands for a commutator
-        show_int() # Returns the result of `show interfaces` command (string)
-        show_run() # Returns the result of `show running-config` command (string)
-        version() # Returns the version of firmware (string)
-        write() # Execute `write` command
+    Methods applied to a commutator (commutator-methods) are:
+        execute(command: str) # Execute an arbitrary command. When executed, returns the output.
+        execute_file(filename: str) # Execute a script in a file. When executed, returns True.
+        show_int() # Returns the result of `show interfaces` command (string).
+        show_run() # Returns the result of `show running-config` command (string).
+        version() # Returns the version of firmware (string).
+        write() # Execute the `write` command. When executed, returns True.
     Methods applied to a port (port-methods) are:
-        get_poe(port, **kwargs) # Returns Poe parameters (see docstring)
-        get_vlan(port, **kwargs) # Returns information about vlan configuration (see docstring)
-        link_state(port) # Returns 1/0 for link state Up/Down
-        set_poe(port, **kwargs) # Setting up Poe
-        set_vlan(port, **kwargs) # Setting up vlan configuration
-        show_int(port) # Returns the result of `show interfaces <port>`
-        show_run(port) # Returns the result of `show running-config <port>`
+        description(port, description: str) # Sets a desription string.
+        get_poe(port, **kwargs) # Returns Poe parameters (see docstring).
+        get_vlan(port, **kwargs) # Returns information about vlan configuration (see docstring).
+        link_state(port) # Returns 1/0 for link state Up/Down.
+        set_poe(port, status) # Setting up Poe. For True sets power inline to 'auto', for False - to 'never'.
+        set_vlan(port, **kwargs) # Setting up vlan configuration.
+        show_int(port) # Returns the result of `show interfaces <port>.
+        show_run(port) # Returns the result of `show running-config <port>`.
     Port-methods always get the port number as a first argument (see parse_portnumber() docstring)."""
 
     console_print = False
@@ -40,14 +42,14 @@ class Commutator:
         self.__conn.connect(ip)
         self.__conn.login(acc)
         self.__conn.execute('terminal datadump')
-        print('Logged in')
-
+        if Commutator.console_print:
+            print('Logged in')
 
     def __repr__(self):
         return f'{self.brand} commutator, ip {self.ip}'
 
-
-    def parse_portnumber(self, *args):
+    @staticmethod
+    def parse_portnumber(*args):
         """Parsing port from the first position argument
         as int < 1000 - twisted pair ports:
             1 for GigabitEthernet 1/0/1,
@@ -55,28 +57,49 @@ class Commutator:
             222 for GigabitEthernet 2/0/22,
         as int > 1000 - fiber optics ports:
             1001 for TengigabitEthernet 1/0/1,
-            1404 for TengigabitEthernet 4/0/4 etc
-        as list:
-            ['gi',1,0,1] for GigabitEthernet 1/0/1,
+            1404 for TengigabitEthernet 4/0/4
+        as list or tuple:
+            ['gi', 1, 0, 1] for GigabitEthernet 1/0/1,
+            ('te', 4, 0, 4) for TengigabitEthernet 4/0/4
         as string:
             "po 1" for port-channel 1
             "whatever" for whatever"""
 
         interface = args[0]
         if isinstance(interface, int):
-                if interface < 100:
-                    return f'gi 1/0/{interface}'
-                elif 100 < interface < 1000:
-                    return f'gi {interface // 100}/0/{interface % 100}'
-                elif 1000 < interface < 1100:
-                    return f'te 1/0/{interface%100}'
-                else:
-                    return f'te {(interface-1000) // 100}/0/{interface % 100}'
-        elif isinstance(interface, list):
-                return f'{interface[0]} {interface[1]}/{interface[2]}/{interface[3]}'
+            if interface < 100:
+                return f'gi 1/0/{interface}'
+            elif 100 < interface < 1000:
+                return f'gi {interface // 100}/0/{interface % 100}'
+            elif 1000 < interface < 1100:
+                return f'te 1/0/{interface%100}'
+            else:
+                return f'te {(interface-1000) // 100}/0/{interface % 100}'
+        elif isinstance(interface, (list, tuple)):
+            return f'{interface[0]} {interface[1]}/{interface[2]}/{interface[3]}'
         elif isinstance(interface, str):
-                return interface
+            return interface
 
+    def description(self, *args):
+        """Getting or setting description for a port.
+        Gets a portnumber and a description string. If the string is empty, description is erased."""
+
+        interface = self.parse_portnumber(*args)
+        if len(args) > 1:
+            self.execute('config')
+            self.execute(f'interface {interface}')
+            if args[1]:
+                self.execute(f'description "{args[1]}"')
+            else:
+                self.execute(f'no description')
+            self.execute('ex')
+            self.execute('ex')
+            return True
+        else:
+            answer = self.show_run(*args).split('\n')
+            for line in answer:
+                if 'description' in line:
+                    return line.split('"')[1]
 
     def show_int(self, *args):
         """With no arguments returns result of `show interfaces` command
@@ -88,10 +111,8 @@ class Commutator:
             command = f'sh int {interface}'
         else:
             command = 'sh int'
-        self.__conn.execute(command)
-        answer = self.__conn.response
-        return answer
-
+        self.execute(command)
+        return self.__conn.response
 
     def show_run(self, *args):
         """With no arguments returns result of `show running-config` command
@@ -103,17 +124,15 @@ class Commutator:
             command = f'sh ru int {interface}'
         else:
             command = 'sh ru'
-        self.__conn.execute(command)
-        answer = self.__conn.response
-        return answer
-
+        self.execute(command)
+        return self.__conn.response
 
     def link_state(self, *args):
         """Returns 1 if port's link state is up and 0 if it's down"""
 
         try:
             interface = self.parse_portnumber(*args)
-            self.__conn.execute(f'show int status {interface}')
+            self.execute(f'show int status {interface}')
             answer = self.__conn.response.split('\n')
             for i, line in enumerate(answer):
                 if 'Port' in line:
@@ -124,7 +143,6 @@ class Commutator:
                         return False
         except:
             pass
-
 
     def get_vlan(self, *args, **kwargs):
         """Returns information about vlan setup. Selecting an interface is necessary.
@@ -166,7 +184,6 @@ class Commutator:
                     d['allowed'] = (line.strip().split(' ')[-1])
             return d
 
-
     def set_vlan(self, *args, **kwargs):
         """Setting a switchport configuration.
         Number of port is given like in show_run().
@@ -187,7 +204,7 @@ class Commutator:
                 if current_setup and (current_setup['mode'] == 'trunk'):
                     self.execute(f"no switchport trunk multicast-tv vlan")
                     self.execute(f"switchport trunk allowed vlan remove all")
-                    self.__conn.execute(f"no switchport trunk native vlan")
+                    self.execute(f"no switchport trunk native vlan")
                 if current_setup and (current_setup['mode'] == 'access'):
                     self.execute(f"no switchport access multicast-tv vlan")
                     self.execute('no switchport access vlan')
@@ -213,8 +230,6 @@ class Commutator:
                 self.execute('ex')
                 return True
 
-
-
     def get_poe(self, *args, **kwargs):
         """Getting information about POE on a port.
         returns True is operational Poe status is on
@@ -228,7 +243,7 @@ class Commutator:
         # Somewhy Exscript throws InvalidCommandException after requesting Poe. But output is ok
         try:
             command = f'show power inline {interface}'
-            self.__conn.execute(command)
+            self.execute(command)
         except:
             try:
                 answer = self.__conn.response.lstrip(command + '\n')
@@ -256,26 +271,24 @@ class Commutator:
         except:
             pass
 
-
-    def set_poe(self, *args, **kwargs):
+    def set_poe(self, *args):
         """Setting POE operational status on a port
         Gets a portnumber and True/False. For True sets power inline to 'auto', for False - to 'never'
         After the succesfull execution returns True, in case of trouble returns None"""
 
         interface = self.parse_portnumber(*args)
         try:
-            self.__conn.execute('config')
-            self.__conn.execute(f'interface {interface}')
+            self.execute('config')
+            self.execute(f'interface {interface}')
             if True in args:
-                self.__conn.execute(f'power inline auto')
+                self.execute(f'power inline auto')
             elif False in args:
-                self.__conn.execute(f'power inline never')
-            self.__conn.execute('ex')
-            self.__conn.execute('ex')
+                self.execute(f'power inline never')
+            self.execute('ex')
+            self.execute('ex')
             return True
         except:
             pass
-
 
     def execute(self, command):
         """Executes a command and returns the output"""
@@ -286,7 +299,8 @@ class Commutator:
         return self.__conn.response
 
     def execute_file(self, filename):
-        """Reads the file and consequently executes each instruction to the commutator configuration.
+        """Reads the file and consequently executes each instruction to the commutator's configuration.
+        Returns True.
         When writing a script put at least one instruction between `write` and `reload`"""
 
         with open(filename, 'r') as file:
@@ -300,10 +314,10 @@ class Commutator:
                     self.__conn.set_prompt('] ')
                     self.execute(line.strip())
                     self.__conn.send('y')
-                    self.__conn.close()
+                    self.__conn.close() # This line prevents from the long expectation
                 else:
                     self.execute(line.strip())
-
+        return True
 
     def version(self):
         """Returns a firmware version (a string)"""
@@ -317,7 +331,6 @@ class Commutator:
         except:
             pass
 
-
     def write(self):
         """Executes `write` command"""
 
@@ -325,7 +338,7 @@ class Commutator:
         self.execute('write')
         self.__conn.set_prompt()
         self.execute('y')
-
+        return True
 
     def __del__(self):
         print(f'Disconnecting from {self.ip}')
