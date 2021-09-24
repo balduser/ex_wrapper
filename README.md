@@ -46,7 +46,7 @@ You may enable output of interaction between the PC and a commutator to the cons
 ### Examples
 
 To see the SW version, execute a command and then a script:  
-```
+```py
 from ex_wrapper import Commutator
 
 c = Commutator('192.168.1.1', 'admin', 'password')
@@ -56,18 +56,18 @@ c.execute_file('script.txt')
 ```
 
 To see ports with poe devices consuming power and the amount of it:   
-```
+```py
 from ex_wrapper import Commutator
 
 c = Commutator('192.168.1.1', 'admin', 'password')
 for i in range(1, 25): # Checking GigabitEthernet ports from 1 to 24
 	ans = c.get_poe(i, params=True):
 	if ans['status']:
-	print(ans['power'])
+	print(i, ans['power'])
 ```
 
 To see vlan setup on ports with active links:  
-```
+```py
 from ex_wrapper import Commutator
 
 c = Commutator('192.168.1.1', 'admin', 'password')
@@ -78,7 +78,7 @@ for i in range(1, 25): # Checking GigabitEthernet ports from 1 to 24
 ```
 
 To set vlan configuration on ports with "Wi-Fi" in description:  
-```
+```py
 from ex_wrapper import Commutator
 
 Commutator.console_print = True
